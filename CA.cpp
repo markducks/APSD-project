@@ -122,7 +122,11 @@ int main(int argc, char *argv[]){
         swap();
     }
     */
-
+    MPI_Type_free(&columnType);
+    MPI_Type_free(&rowType);
+    MPI_Type_free(&cornerType);
+    delete[] readM;
+    delete[] writeM;
     MPI_Finalize();
     return 0;
 }
