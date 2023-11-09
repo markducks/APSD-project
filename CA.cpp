@@ -1,28 +1,51 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "CA.h"
 
-#define NCOLS 2000 //Dummy values
-#define NROWS 2000 //Dummy values
-#define NGENS 2000 //Dummy values
-
-#define NCELLS ((NCOLS*NROWS)/nProc)+4 // +4 for ghost cells???
-
-int* readM;
-int* writeM;
+#define NCOLS 9 //Dummy values
+#define NROWS 9 //Dummy values
+#define NGENS 10 //Dummy values
+ 
+#define v(r,c) ((r)*(colsPerProc+2) + (c))
 
 int nProc, rank, rankLeft, rankRight, rankUp, rankDown; 
+int rankDiagonalUpLeft, rankDiagonalUpRight, rankDiagonalDownLeft, rankDiagonalDownRight;
 MPI_Datatype columnType, rowType, cornerType; //Is cornerType needed?
+int* readM;
+int* writeM;
+int rowsPerProc, colsPerProc;
 
-//Todo: Create all the side functions
+void init(){
+    for(int i=0; i<rowsPerProc+2; i++){
+        for(int j=0; j<colsPerProc+2; j++){
+            readM[v(i,j)] = 0;
+            writeM[v(i,j)] = 0; //Is this needed?
+        }
+    }
+}
 
-void init(){}
-
-void initCA(){}
+void initCA(){
+    //Random initialization of Game Of Life
+    for(int i=1; i<rowsPerProc+1; i++){
+        for(int j=1; j<colsPerProc+1; j++){
+            readM[v(i,j)] = rand()%2;
+        }
+    }
+}
 
 void swap(){}
 
-inline void sendBorders(){}
+inline void sendBorders(){
+    MPI_Request req;
+    //Send the borders to the neighbors
+    MPI_Isend(&readM[v(1,1)], 1, rowType, rankUp, 17, MPI_COMM_WORLD, &req);
+    MPI_Isend(&readM[v(rowsPerProc,1)], 1, rowType, rankDown, 18, MPI_COMM_WORLD, &req);
+    MPI_Isend(&readM[v(1,1)], 1, columnType, rankLeft, 19, MPI_COMM_WORLD, &req);
+    MPI_Isend(&readM[v(1,colsPerProc)], 1, columnType, rankRight, 20, MPI_COMM_WORLD, &req);
+
+    //Send the corners to the diagonal neighbors
+}
 
 inline void recvBorders(){}
 
@@ -32,6 +55,12 @@ inline void transFuncBorders(){}
 
 inline void transFunc(){}
 
+void printCoords(MPI_Comm cartComm){
+    int myCoords[2] = {0, 0};
+    MPI_Cart_coords(cartComm, rank, 2, myCoords);
+    // Print all the ranks and their coordinates
+    printf("Rank: %d, coords: (%d,%d)\n rankLeft: %d, rankRight: %d, rankUp: %d, rankDown: %d\n rankDiagonalUpLeft: %d, rankDiagonalUpRight: %d, rankDiagonalDownLeft: %d, rankDiagonalDownRight: %d\n\n", rank, myCoords[0], myCoords[1], rankLeft, rankRight, rankUp, rankDown, rankDiagonalUpLeft, rankDiagonalUpRight, rankDiagonalDownLeft, rankDiagonalDownRight);
+}
 
 int main(int argc, char *argv[]){
 
@@ -39,26 +68,51 @@ int main(int argc, char *argv[]){
     MPI_Comm_size(MPI_COMM_WORLD, &nProc);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    readM = new int[NCELLS];
-    writeM = new int[NCELLS];
-
     MPI_Comm cartComm;
     int dims[2] = {0, 0}; 
     MPI_Dims_create(nProc, 2, dims); 
     int periods[2] = {1,1};
     MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0, &cartComm);
-    MPI_Cart_shift(cartComm, 0, 1, &rankLeft, &rankRight);
-    MPI_Cart_shift(cartComm, 1, 1, &rankUp, &rankDown);
+    MPI_Cart_shift(cartComm, 0, 1, &rankUp, &rankDown);
+    MPI_Cart_shift(cartComm, 1, 1, &rankLeft, &rankRight);
 
-    //Todo: Create the columnType, rowType and cornerType
+    //Calculate the ranks of the processes in the diagonal
+    int coords[2];
+    MPI_Cart_coords(cartComm, rank, 2, coords); 
 
-    //Todo: Initialize the matrix
+    coords[0] = (coords[0] - 1 + dims[0]) % dims[0];
+    coords[1] = (coords[1] - 1 + dims[1]) % dims[1];
+    MPI_Cart_rank(cartComm, coords, &rankDiagonalUpLeft);
+
+    coords[1] = (coords[1] + 2) % dims[1];
+    MPI_Cart_rank(cartComm, coords, &rankDiagonalUpRight);
+
+    coords[0] = (coords[0] + 2) % dims[0];
+    MPI_Cart_rank(cartComm, coords, &rankDiagonalDownRight);
+
+    coords[1] = (coords[1] - 2 + dims[1]) % dims[1];
+    MPI_Cart_rank(cartComm, coords, &rankDiagonalDownLeft);
+
+    printCoords(cartComm); //Todo: Remove
+
+    rowsPerProc = NROWS/dims[0];
+    colsPerProc = NCOLS/dims[1];
+    readM = new int[(rowsPerProc+2)*(colsPerProc+2)];
+    writeM = new int[(rowsPerProc+2)*(colsPerProc+2)];
+
+    MPI_Type_vector(NROWS+2, 1, NCOLS+2, MPI_INT, &columnType); //NROWS+4 or NROWS?
+    MPI_Type_commit(&columnType);
+    MPI_Type_vector(NCOLS+2, 1, 1, MPI_INT, &rowType);
+    MPI_Type_commit(&rowType);
+    MPI_Type_vector(1, 1, 1, MPI_INT, &cornerType); //Useless(?) but created for consistency
+    MPI_Type_commit(&cornerType);
+
+    /*
     init();
 
     //Todo: Create the initial configuration
     initCA();
 
-    //Todo: Create the main loop
     for(int i = 0; i < NGENS; i++){
         sendBorders();
         transFuncInside();
@@ -67,6 +121,7 @@ int main(int argc, char *argv[]){
         //Allegro here(?)
         swap();
     }
+    */
 
     MPI_Finalize();
     return 0;
