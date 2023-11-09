@@ -130,13 +130,12 @@ int main(int argc, char *argv[]){
 
     rowsPerProc = NROWS/dims[0];
     colsPerProc = NCOLS/dims[1];
-    printf("rowsPerProc: %d, colsPerProc: %d\n", rowsPerProc, colsPerProc);
     readM = new int[(rowsPerProc+2)*(colsPerProc+2)];
     writeM = new int[(rowsPerProc+2)*(colsPerProc+2)];
 
-    MPI_Type_vector(NROWS+2, 1, NCOLS+2, MPI_INT, &columnType); //NROWS+4 or NROWS?
+    MPI_Type_vector(rowsPerProc+2, 1, colsPerProc+2, MPI_INT, &columnType); //NROWS+4 or NROWS?
     MPI_Type_commit(&columnType);
-    MPI_Type_vector(NCOLS+2, 1, 1, MPI_INT, &rowType);
+    MPI_Type_vector(colsPerProc+2, 1, 1, MPI_INT, &rowType);
     MPI_Type_commit(&rowType);
     MPI_Type_vector(1, 1, 1, MPI_INT, &cornerType); //Useless(?) but created for consistency
     MPI_Type_commit(&cornerType);
