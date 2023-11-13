@@ -47,18 +47,18 @@ void initRandomCA(){
 
 inline void send(){
     MPI_Request req;
-    //Send the borders to the neighbors
-    MPI_Send(&readM[v(1,0)], 1, rowType, rankUp, 17, cartComm);
-    MPI_Send(&readM[v(rowsPerProc,0)], 1, rowType, rankDown, 18, cartComm);
-    MPI_Send(&readM[v(0,1)], 1, columnType, rankLeft, 19, cartComm);
-    MPI_Send(&readM[v(0,colsPerProc)], 1, columnType, rankRight, 20, cartComm);
+
+    MPI_Isend(&readM[v(1,0)], 1, rowType, rankUp, 17, cartComm, &req);
+    MPI_Isend(&readM[v(rowsPerProc,0)], 1, rowType, rankDown, 18, cartComm,  &req);
+    MPI_Isend(&readM[v(0,1)], 1, columnType, rankLeft, 19, cartComm, &req);
+    MPI_Isend(&readM[v(0,colsPerProc)], 1, columnType, rankRight, 20, cartComm, &req);
 
     
     //Send the corners to the diagonal neighbors
-    MPI_Send(&readM[v(1,1)], 1, cornerType, rankDiagonalUpLeft, 21, cartComm);
-    MPI_Send(&readM[v(1,colsPerProc)], 1, cornerType, rankDiagonalUpRight, 22, cartComm);
-    MPI_Send(&readM[v(rowsPerProc,1)], 1, cornerType, rankDiagonalDownLeft, 23, cartComm);
-    MPI_Send(&readM[v(rowsPerProc,colsPerProc)], 1, cornerType, rankDiagonalDownRight, 24, cartComm);
+    MPI_Isend(&readM[v(1,1)], 1, cornerType, rankDiagonalUpLeft, 21, cartComm, &req);
+    MPI_Isend(&readM[v(1,colsPerProc)], 1, cornerType, rankDiagonalUpRight, 22, cartComm, &req);
+    MPI_Isend(&readM[v(rowsPerProc,1)], 1, cornerType, rankDiagonalDownLeft, 23, cartComm, &req);
+    MPI_Isend(&readM[v(rowsPerProc,colsPerProc)], 1, cornerType, rankDiagonalDownRight, 24, cartComm, &req);
     
 }
 
@@ -79,13 +79,58 @@ inline void recv(){
     
 }
 
-inline void transFuncInside(){}
+inline void transFunc(int i, int j){
+    int nNeighbors = 0;
+    nNeighbors += readM[v(i-1,j-1)];
+    nNeighbors += readM[v(i-1,j)];
+    nNeighbors += readM[v(i-1,j+1)];
+    nNeighbors += readM[v(i,j-1)];
+    nNeighbors += readM[v(i,j+1)];
+    nNeighbors += readM[v(i+1,j-1)];
+    nNeighbors += readM[v(i+1,j)];
+    nNeighbors += readM[v(i+1,j+1)];
+    if(readM[v(i,j)] == 1){
+        if(nNeighbors < 2 || nNeighbors > 3){
+            writeM[v(i,j)] = 0;
+        }
+        else{
+            writeM[v(i,j)] = 1;
+        }
+    }
+    else{
+        if(nNeighbors == 3){
+            writeM[v(i,j)] = 1;
+        }
+        else{
+            writeM[v(i,j)] = 0;
+        }
+    }
+}
 
-inline void transFuncBorders(){}
+inline void transFuncInside(){
+    for(int i=1; i<rowsPerProc; i++){  //is correct?
+        for(int j=1; j<colsPerProc; j++){  //is correct?
+            transFunc(i,j);
+        }
+    }
+}
 
-inline void transFunc(){}
+inline void transFuncBorders(){
+    for(int i=0; i<rowsPerProc; i++){  //is correct?
+        transFunc(i,0);
+        transFunc(i,colsPerProc+1);
+    }
+    for(int j=0; j<colsPerProc; j++){  //is correct?
+        transFunc(0,j);
+        transFunc(rowsPerProc+1,j);
+    }
+}
 
-void swap(){}
+void swap(){
+    int* temp = readM;
+    readM = writeM;
+    writeM = temp;
+}
 
 void printCoords(MPI_Comm cartComm){
     int myCoords[2] = {0, 0};
@@ -165,12 +210,12 @@ int main(int argc, char *argv[]){
 
     for(int i = 0; i < NGENS; i++){
         send();
-        //transFuncInside();
+        transFuncInside();
         recv();
         printGather();
-        //transFuncBorders();
+        transFuncBorders();
         //Allegro here(?)
-        //swap();
+        swap();
     }
 
     MPI_Type_free(&columnType);
