@@ -1,22 +1,32 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <allegro.h> //  /usr/include/allegro.h   /usr/lib/x86_64-linux-gnu/liballeg.so
 #include "CA.h"
 
-#define NCOLS 9 //Dummy values
-#define NROWS 9 //Dummy values
-#define NGENS 1 //Dummy values
+#define NCOLS 120 
+#define NROWS 180
+#define NGENS 3500 
+#define CELL_SIZE 2 
  
 #define v(r,c) ((r)*(colsPerProc+2) + (c))
 
+#define g(i, j) ((i)*NCOLS + (j))
+
+
 int nProc, rank, rankLeft, rankRight, rankUp, rankDown; 
 int rankDiagonalUpLeft, rankDiagonalUpRight, rankDiagonalDownLeft, rankDiagonalDownRight;
-MPI_Datatype columnType, rowType, cornerType; 
+MPI_Datatype columnType, rowType, cornerType, gatherType; 
 MPI_Comm cartComm;
 int* readM;
 int* writeM;
 int dims[2];
 int rowsPerProc, colsPerProc;
+
+int black, white;
+int dir = 1;
+BITMAP *buffer;
+int* gatherBuffer;
 
 void testInit(){
     for(int i=0; i<rowsPerProc+2; i++){
@@ -25,7 +35,6 @@ void testInit(){
         }
     }
 }
-
 
 void init(){
     for(int i=0; i<rowsPerProc+2; i++){
@@ -44,6 +53,32 @@ void initRandomCA(){
     }
 }
 
+inline void initLWSS(){
+    readM[v(1,2)] = 1;
+    readM[v(1,3)] = 1;
+    readM[v(1,4)] = 1;
+    readM[v(1,5)] = 1;
+    readM[v(2,1)] = 1;
+    readM[v(2,5)] = 1;
+    readM[v(3,5)] = 1;
+    readM[v(4,4)] = 1;
+}
+
+void initGlider(){
+    // Clear the grid
+    for(int i=0; i<rowsPerProc+2; i++){
+        for(int j=0; j<colsPerProc+2; j++){
+            readM[v(i,j)] = 0;
+        }
+    }
+
+    // Set the glider pattern
+    readM[v(1,2)] = 1;
+    readM[v(2,3)] = 1;
+    readM[v(3,1)] = 1;
+    readM[v(3,2)] = 1;
+    readM[v(3,3)] = 1;
+}
 
 inline void send(){
     MPI_Request req;
@@ -108,21 +143,21 @@ inline void transFunc(int i, int j){
 }
 
 inline void transFuncInside(){
-    for(int i=1; i<rowsPerProc; i++){  //is correct?
-        for(int j=1; j<colsPerProc; j++){  //is correct?
+    for(int i=2; i<rowsPerProc; i++){  //is correct?
+        for(int j=2; j<colsPerProc; j++){  //is correct?
             transFunc(i,j);
         }
     }
 }
 
 inline void transFuncBorders(){
-    for(int i=0; i<rowsPerProc; i++){  //is correct?
-        transFunc(i,0);
-        transFunc(i,colsPerProc+1);
+    for(int i=1; i<rowsPerProc+1; i++){
+        transFunc(i,1);
+        transFunc(i,colsPerProc);
     }
-    for(int j=0; j<colsPerProc; j++){  //is correct?
-        transFunc(0,j);
-        transFunc(rowsPerProc+1,j);
+    for(int j=1; j<colsPerProc+1;j++){
+        transFunc(1,j);
+        transFunc(rowsPerProc,j);
     }
 }
 
@@ -132,34 +167,68 @@ void swap(){
     writeM = temp;
 }
 
-void printCoords(MPI_Comm cartComm){
+void allegroInit(){
+   
+	allegro_init();
+	set_color_depth(8);
+	buffer = create_bitmap(NCOLS, NROWS);
+	set_gfx_mode( GFX_AUTODETECT_WINDOWED, NCOLS, NROWS, 0, 0);
+
+    white = makecol(255, 255, 255);
+	
+
+}
+
+void initGather(){
+    MPI_Type_vector(rowsPerProc, colsPerProc, colsPerProc+2, MPI_INT, &gatherType);
+    MPI_Type_commit(&gatherType);
+    gatherBuffer = new int[NROWS*NCOLS];
+}
+
+void gatherData(){
     int myCoords[2] = {0, 0};
     MPI_Cart_coords(cartComm, rank, 2, myCoords);
     // Print all the ranks and their coordinates
     printf("Rank: %d, coords: (%d,%d)\n rankLeft: %d, rankRight: %d, rankUp: %d, rankDown: %d\n rankDiagonalUpLeft: %d, rankDiagonalUpRight: %d, rankDiagonalDownLeft: %d, rankDiagonalDownRight: %d\n\n", rank, myCoords[0], myCoords[1], rankLeft, rankRight, rankUp, rankDown, rankDiagonalUpLeft, rankDiagonalUpRight, rankDiagonalDownLeft, rankDiagonalDownRight);
 }
 
-inline void printGather(){
-    int* gatherBuffer = NULL;
-    if(rank == 0){
-        gatherBuffer = new int[nProc * (rowsPerProc+2) * (colsPerProc+2)];
+inline void print(){
+
+    for (int i = 0; i < NROWS; i++) {
+        for (int j = 0; j < NCOLS; j++) {
+            switch (gatherBuffer[g(i,j)]) {
+                case 0:
+                    putpixel(buffer, i, j, black);
+                    break;
+                case 1:
+                    putpixel(buffer, i, j, white);
+                    break;
+        };
+    };
+
+    blit(buffer, screen, 0, 0, 0, 0, NROWS, NCOLS);
     }
+}
 
-    MPI_Gather(readM, (rowsPerProc+2) * (colsPerProc+2), MPI_INT, gatherBuffer, (rowsPerProc+2) * (colsPerProc+2), MPI_INT, 0, MPI_COMM_WORLD);
-
-    if (rank == 0) {
-        for (int i = 0; i < nProc; i++) {
-            printf("Matrix from rank %d:\n", i);
-            for (int j = 0; j < (rowsPerProc+2); j++) {
-                for (int k = 0; k < (colsPerProc+2); k++) {
-                    printf("%d ", gatherBuffer[i * (rowsPerProc+2) * (colsPerProc+2) + j * (colsPerProc+2) + k]);
-                }
-                printf("\n");
+inline void printWithCells(){
+    for (int i = 0; i < NROWS; i++) {
+        for (int j = 0; j < NCOLS; j++) {
+            if(gatherBuffer[g(i,j)] == 1){
+                rectfill(buffer, j * CELL_SIZE, i * CELL_SIZE, j*CELL_SIZE+CELL_SIZE, i*CELL_SIZE+CELL_SIZE, white);
             }
-            printf("\n");
+            else{
+                rectfill(buffer, j * CELL_SIZE, i * CELL_SIZE, j*CELL_SIZE+CELL_SIZE, i*CELL_SIZE+CELL_SIZE, black);
+            }
+        };
+    };
+    blit(buffer, screen, 0, 0, 0, 0, NROWS, NCOLS);
+}
+
+inline void gatherAndPrint(){
+    MPI_Gather(&readM[v(1,1)], 1, gatherType, gatherBuffer, 1, gatherType, 0, MPI_COMM_WORLD);
+        if(rank == 0){
+            printWithCells();
         }
-        delete[] gatherBuffer;
-    }
 }
 
 inline void rankDiscovering(){
@@ -183,7 +252,24 @@ inline void rankDiscovering(){
     MPI_Cart_rank(cartComm, coords, &rankDiagonalDownLeft);
 }
 
-//MAIN
+void allegroDraw(int step){
+   	//draw every pixel with a color depending on the state
+	for (int row = 0; row < rowsPerProc; row++)
+		for (int col = 0; col < colsPerProc; col++)
+			switch (readM[v(row,col)]) {
+			case 0:
+				putpixel(buffer, col, row, black);
+				break;
+			case 1:
+				putpixel(buffer, col, row, white);
+				break;
+			}
+
+	textprintf_ex(buffer, font, 0, 0, white, black, "Step: %d", step);
+
+	blit(buffer, screen, 0, 0, 0, 0, rowsPerProc, colsPerProc);
+}
+
 int main(int argc, char *argv[]){
 
     MPI_Init(&argc, &argv);
@@ -194,6 +280,7 @@ int main(int argc, char *argv[]){
 
     rowsPerProc = NROWS/dims[0];
     colsPerProc = NCOLS/dims[1];
+
     readM = new int[(rowsPerProc+2)*(colsPerProc+2)];
     writeM = new int[(rowsPerProc+2)*(colsPerProc+2)];
 
@@ -206,17 +293,32 @@ int main(int argc, char *argv[]){
 
     init();
 
-    initRandomCA();
+    //initRandomCA();
+    initLWSS();
+
+    /*
+    initGather();
+
+    if(rank == 0){
+        allegroInit();
+    }*/
+
+    double startTime = MPI_Wtime();
 
     for(int i = 0; i < NGENS; i++){
         send();
         transFuncInside();
         recv();
-        printGather();
         transFuncBorders();
-        //Allegro here(?)
         swap();
     }
+
+    double endTime = MPI_Wtime();
+    double elapsedTime = endTime - startTime;
+    if (rank == 0) {  // Only print the time on the root process
+        printf("Time elapsed: %f seconds\n", elapsedTime);
+    }
+
 
     MPI_Type_free(&columnType);
     MPI_Type_free(&rowType);
